@@ -1,0 +1,346 @@
+<!DOCTYPE HTML>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Ingvild Kort</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='leaflet.css') }}" />
+<style>
+.z-scale {
+  width: 30px;
+  height: 15px;
+  font-family: "Helvetica Neue", Arial, Helvetica, sans-serif;
+  font-size: 12px;
+  text-align: center;
+  line-height: 16px;
+}
+.dist-marker {
+  font-size: 12px;
+  border: 1px solid #777;
+  border-radius: 10px;
+  text-align: center;
+  color: #000;
+  background: #fff;
+}
+.map {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+}
+</style>
+</head>
+<body>
+<div id="map" class="map">
+<div style="z-index:2000;position:absolute;margin-left:12px;margin-top:80px;">
+<div style="background-color:#0000FF;border-top-left-radius:4px;border-top-right-radius:4px;" class="z-scale">0 kn</div>
+<div style="background-color:#0040FF;" class="z-scale">1 kn</div>
+<div style="background-color:#0080FF;" class="z-scale">2 kn</div>
+<div style="background-color:#00FFB0;" class="z-scale">3 kn</div>
+<div style="background-color:#00E000;" class="z-scale">4 kn</div>
+<div style="background-color:#80FF00;" class="z-scale">5 kn</div>
+<div style="background-color:#FFFF00;" class="z-scale">6 kn</div>
+<div style="background-color:#FFC000;" class="z-scale">7 kn</div>
+<div style="background-color:#FF0000;border-bottom-left-radius:4px;;border-bottom-right-radius:4px;" class="z-scale">8 kn</div>
+</div>
+</div>
+<script src="{{ url_for('static', filename='jquery-3.3.1.js') }}"></script>
+<script src="{{ url_for('static', filename='leaflet.js') }}"></script>
+<script src="{{ url_for('static', filename='Leaflet.MultiOptionsPolyline.js') }}"></script>
+<script src="{{ url_for('static', filename='zepto.min.js') }}"></script>
+<script src="{{ url_for('static', filename='leaflet.geometryutil.js') }}"></script>
+<script>
+L.Control.ScaleNautic = L.Control.Scale.extend({
+	options: {
+		nautic: false
+	},
+
+	_addScales: function(options, className, container) {
+		L.Control.Scale.prototype._addScales.call(this, options, className, container);
+		L.setOptions(options);
+		if (this.options.nautic) {
+			this._nScale = L.DomUtil.create('div', className, container);
+		}
+	},
+
+	_updateScales: function (maxMeters) {
+		L.Control.Scale.prototype._updateScales.call(this, maxMeters);
+		if (this.options.nautic && maxMeters) {
+			this._updateNautic(maxMeters);
+		}
+	},
+
+	_updateNautic: function (maxMeters) {
+		var scale = this._nScale,
+			maxNauticalMiles = maxMeters / 1852, nauticalMiles;
+
+		nauticalMiles = this._getRoundNum(maxNauticalMiles);
+
+		scale.style.width = Math.round(this.options.maxWidth * (nauticalMiles / maxNauticalMiles)) - 10 + 'px';
+		scale.innerHTML = nauticalMiles + ' nm';
+	},
+	
+	_getRoundNum: function (num) {
+        var pow10, d;
+		if (num >= 1) {
+			pow10 = Math.pow(10, (Math.floor(num) + '').length - 1);
+			d = num / pow10;
+		}
+		else {
+            pow10 = 1;
+            d = num;
+			while (d < 1) {
+				d *= 10;
+				pow10 *= 10;
+			}
+		} 
+		
+		d = d >= 10 ? 10 :
+		    d >= 5 ? 5 :
+		    d >= 3 ? 3 :
+			d >= 2 ? 2 : 1;
+		
+		return num >= 1 ? pow10 * d : d / pow10;
+	}
+});
+
+L.control.scalenautic = function (options) {
+	return new L.Control.ScaleNautic(options);
+};
+
+L.DistanceMarkers = L.LayerGroup.extend({
+  initialize: function (line, map, options) {
+    options = options || {};
+		//var offset = options.offset || 1852;
+                var offset = 1;
+		var showAll = Math.min(map.getMaxZoom(), options.showAll || 12);
+		var cssClass = options.cssClass || 'dist-marker';
+		var iconSize = options.iconSize !== undefined ? options.iconSize : [35, 18];
+
+		var zoomLayers = {};
+		// Get line coords as an array
+		var coords = line;
+		if (typeof line.getLatLngs == 'function') {
+			coords = line.getLatLngs();
+		}
+                var accumulated = [];
+                var accum = -coords[0].meta.time;
+                for ( var i = 0 ; i<coords.length; i++ ) {
+                    accumulated[i] = (accum + coords[i].meta.time)/3600; 
+                }
+                var length = accumulated[accumulated.length-1];
+		// Get accumulated line lengths as well as overall length
+		//var accumulated = L.GeometryUtil.accumulatedLengths(line);
+		//var length = accumulated.length > 0 ? accumulated[accumulated.length - 1] : 0;
+		// Position in accumulated line length array
+		var j = 0;
+		// Number of distance markers to be added
+		var count = Math.floor(length / offset);
+		for (var i = 1; i <= count; ++i) {
+			var distance = offset * i;
+			// Find the first accumulated distance that is greater
+			// than the distance of this marker
+			while (j < accumulated.length - 1 && accumulated[j] < distance) {
+				++j;
+			}
+			// Now grab the two nearest points either side of
+			// distance marker position and create a simple line to
+			// interpolate on
+			var p1 = coords[j - 1];
+			var p2 = coords[j];
+			var m_line = L.polyline([p1, p2]);
+			var ratio = (distance - accumulated[j - 1]) / (accumulated[j] - accumulated[j - 1]);
+			var position = L.GeometryUtil.interpolateOnLine(map, m_line, ratio);
+			var icon = L.divIcon({ className: cssClass, html: i.toString()+' h', iconSize: iconSize });
+			var marker = L.marker(position.latLng, { title: i, icon: icon });
+
+			// visible only starting at a specific zoom level
+			var zoom = this._minimumZoomLevelForItem(i, showAll);
+			if (zoomLayers[zoom] === undefined) {
+				zoomLayers[zoom] = L.layerGroup();
+			}
+                        //console.log("Added marker");
+                        //console.log(i,accumulated[i])
+			zoomLayers[zoom].addLayer(marker);
+		}
+
+		var currentZoomLevel = 0;
+		var markerLayer = this;
+		var updateMarkerVisibility = function() {
+			var oldZoom = currentZoomLevel;
+			var newZoom = currentZoomLevel = map.getZoom();
+
+			if (newZoom > oldZoom) {
+				for (var i = oldZoom + 1; i <= newZoom; ++i) {
+					if (zoomLayers[i] !== undefined) {
+						markerLayer.addLayer(zoomLayers[i]);
+					}
+				}
+			} else if (newZoom < oldZoom) {
+				for (var i = oldZoom; i > newZoom; --i) {
+					if (zoomLayers[i] !== undefined) {
+						markerLayer.removeLayer(zoomLayers[i]);
+					}
+				}
+			}
+		};
+		map.on('zoomend', updateMarkerVisibility);
+
+		this._layers = {}; // need to initialize before adding markers to this LayerGroup
+		updateMarkerVisibility();
+	},
+
+	_minimumZoomLevelForItem: function (item, showAllLevel) {
+		var zoom = showAllLevel;
+		var i = item;
+		while (i > 0 && i % 2 === 0) {
+			--zoom;
+			i = Math.floor(i / 2);
+		}
+		return zoom;
+	},
+
+});
+
+L.Polyline.include({
+
+	_originalOnAdd: L.Polyline.prototype.onAdd,
+	_originalOnRemove: L.Polyline.prototype.onRemove,
+
+	addDistanceMarkers: function () {
+		if (this._map && this._distanceMarkers) {
+			this._map.addLayer(this._distanceMarkers);
+		}
+	},
+
+	removeDistanceMarkers: function () {
+		if (this._map && this._distanceMarkers) {
+			this._map.removeLayer(this._distanceMarkers);
+		}
+	},
+
+	onAdd: function (map) {
+		this._originalOnAdd(map);
+
+		var opts = this.options.distanceMarkers || {};
+		if (this._distanceMarkers === undefined) {
+			this._distanceMarkers = new L.DistanceMarkers(this, map, opts);
+		}
+		if (opts.lazy === undefined || opts.lazy === false) {
+			this.addDistanceMarkers();
+		}
+	},
+
+	onRemove: function (map) {
+		this.removeDistanceMarkers();
+		this._originalOnRemove(map);
+	}
+
+});
+
+/*global L, Zepto*/
+(function ($) {
+    'use strict';
+
+    function Demo(mapId, multiOptionsKey) {
+        this.mapId = mapId;
+        this.selected = multiOptionsKey;
+    }
+
+    Demo.prototype = {
+        constructor: Demo,
+
+        trackPointFactory: function (data) {
+            return data.map(function (item) {
+                var trkpt = L.latLng(item.lat, item.lng, 0);
+                trkpt.meta = item.meta;
+                return trkpt;
+            });
+        },
+
+        loadData: function (name) {
+            var me = this;
+
+            $.getJSON('json/' + name, function (data) {
+                me.trackPoints = me.trackPointFactory(data);
+                me.showMapAndTrack();
+            });
+        },
+
+        _multiOptions: {
+            speed: {
+                optionIdxFn: function (latLng, prevLatLng) {
+                    var i, speed,
+                        speedThresholds = [1,2,3,4,5,6,7,8,9];
+
+                    speed = latLng.distanceTo(prevLatLng)*3.6*0.5396/(latLng.meta.time - prevLatLng.meta.time); // meters
+
+                    for (i = 0; i < speedThresholds.length; ++i) {
+                        if (speed <= speedThresholds[i]) {
+                            return i;
+                        }
+                    }
+                    return speedThresholds.length;
+                },
+                options: [
+                    {color: '#0000FF',speed:'0 kn'}, {color: '#0040FF',speed:'1 kn'}, {color: '#0080FF',speed:'2 kn'},
+                    {color: '#00FFB0',speed:'3 kn'}, {color: '#00E000',speed:'4 kn'}, {color: '#80FF00',speed:'5 kn'},
+                    {color: '#FFFF00',speed:'6 kn'}, {color: '#FFC000',speed:'7 kn'}, {color: '#FF0000',speed:'8 kn'}
+                ]
+            }
+        },
+
+        showMapAndTrack: function () {
+            var me = this,
+                points = me.trackPoints;
+
+            //if (!me.map) {
+            //    me.map = L.map(me.mapId, {
+            //        layers: MQ.satelliteLayer()
+            //    });
+            //}
+
+            var Hydda_Full = L.tileLayer('{{ tile_domain }}/{z}/{x}/{y}.png', {
+	maxZoom: 20,
+	attribution: 'Map data &copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+});
+
+            me.map = L.map(me.mapId, {layers: Hydda_Full});
+            if (me.visibleTrack) {
+                me.map.removeLayer(me.visibleTrack);
+            }
+
+            me.visibleTrack = L.featureGroup();
+
+            // create a polyline from an arrays of LatLng points
+            var polyline = L.multiOptionsPolyline(points, {
+                multiOptions: me._multiOptions[me.selected],
+                distanceMarkers: {lazy: true},
+                weight: 5,
+                lineCap: 'butt',
+                opacity: 0.75,
+                smoothFactor: 1}).addTo(me.visibleTrack);
+            polyline.bindTooltip(function(layer) {return layer.options.speed;}, {sticky: true});
+            // zoom the map to the polyline
+            me.map.fitBounds(polyline.getBounds());
+
+            me.visibleTrack.addTo(me.map);
+            me.map.addLayer(L.polyline(points).setStyle({fill:false,stroke:false}));
+me.map.addControl(new L.Control.ScaleNautic({
+				metric: false,
+				imperial: false,
+				nautic: true
+			}));
+        }
+    };
+
+    var file = location.search.split('file=')[1];
+    if ( file == undefined ) {
+      map.innerHTML = '{% if files %}{% for filename in files %}<a href="?file={{ filename }}">{{ filename }}</a><br />{% endfor %}{% else %}No data{% endif %}';
+    } else {
+      new Demo('map', 'speed').loadData(file);
+    }
+})(Zepto);
+</script>
+</body>
+</html>
